@@ -1,32 +1,35 @@
 from fastapi import Request, Response, FastAPI
 import pymongo
 
-from db import load_collection
+from db import Mongo
+from db import delete_all
+from db import delete_one
 from middleware import auth_middleware
-from lib import error_response
-from lib import success_response
 
 
-def delete_current_user(app: FastAPI, client: pymongo.MongoClient):
-
-    user_collection = load_collection(client, 'users')
-    session_collection = load_collection(client, 'sessions')
+def delete_current_user(app: FastAPI, mongo: Mongo):
 
     @app.delete("/user")
     async def route_delete_current_user(request: Request, response: Response):
-        try:
-            user = auth_middleware(
-                request, session_collection, user_collection)
-            session_delete_count = session_collection.delete_many({
-                'user': user['_id']
-            })
-            user_delete_count = user_collection.delete_one(
-                {'_id': user['_id']})
-            response.set_cookie(
-                key='session_token',
-                value=''
-            )
-            return success_response(response, 200, 'user deleted')
-        except Exception as error:
-            print(error)
-            return error_response(response, error)
+
+        # getting the logged in user
+        user, err = auth_middleware(request, mongo)
+        if err != None:
+            response.status_code = 400
+            return {'msg': 'unauthorized'}
+
+        # dropping the user
+        result = delete_one(mongo.users, {'_id': user['_id']})
+
+        # dropping all user resources
+        result = delete_all(mongo.sessions, {'user': user['_id']})
+        result = delete_all(mongo.stores, {'user': user['_id']})
+
+        # resetting session cookies
+        response.set_cookie(
+            key='session_token',
+            value=''
+        )
+
+        # json response
+        return {'msg': 'user deleted'}

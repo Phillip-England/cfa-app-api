@@ -2,49 +2,48 @@ import datetime
 
 from fastapi import Request, Response, FastAPI
 from pydantic import BaseModel
-import pymongo
+from bson import ObjectId
 
-from db import load_collection
-from lib import error_response
-from lib import success_response
-from lib import check_password
+from db import Mongo, find_one, delete_all, insert_one
+from lib import compare_hash, days_in_future, respond
 
 
-def login_user(app: FastAPI, client: pymongo.MongoClient):
-
-    user_collection = load_collection(client, 'users')
-    session_collection = load_collection(client, 'sessions')
+def login_user(app: FastAPI, mongo: Mongo):
 
     class RequestBody(BaseModel):
         email: str
         password: str
 
     @app.post("/user/login")
-    async def route_login_user(body: RequestBody, request: Request, response: Response):
-        try:
-            user = user_collection.find_one({
-                'email': body.email
-            })
-            if user == None:
-                raise Exception(400, 'invalid credentials')
-            check_password(
-                body.password, user['password'], 'invalid credentials')
-            delete_count = session_collection.delete_many({
-                'user': user['_id']
-            })
-            expiration_time = datetime.datetime.now() + datetime.timedelta(days=1)
-            iso_expiration_time = expiration_time.isoformat()
-            result = session_collection.insert_one({
-                'user': user['_id'],
-                'expires': iso_expiration_time
-            })
-            session_id = result.inserted_id
-            response.set_cookie(
-                key='session_token',
-                value=session_id,
-                expires=86400,  # 24 hours in seconds
-                httponly=True
-            )
-            return success_response(response, 200, 'success')
-        except Exception as error:
-            return error_response(response, error)
+    async def route_login_user(body: RequestBody, req: Request, res: Response):
+
+        # unpacking request body
+        email = body.email
+        password = body.password
+
+        # pulling provided user
+        provided_user = find_one(mongo.users, {'email': email})
+        if provided_user == None:
+            return respond(res, 'invalid credentails', 400)
+
+        # checking is password is correct
+        if compare_hash(password, provided_user['password']) != None:
+            return respond(res, 'invalid credentials', 400)
+
+        # dropping all user sessions
+        result = delete_all(
+            mongo.sessions, {'user': ObjectId(provided_user['_id'])})
+
+        # creating a new user session
+        result = insert_one(mongo.sessions, {
+            'user': ObjectId(provided_user['_id']),
+            'created_at': days_in_future(0).isoformat(),
+            'expires_at': days_in_future(1).isoformat()
+        })
+
+        # creating a http cookie with session
+        res.set_cookie(key='session_token', value=str(
+            result.inserted_id), expires=days_in_future(1).isoformat())
+
+        # json response
+        return respond(res, 'success')

@@ -3,29 +3,29 @@ import datetime
 from fastapi import Request, Response, FastAPI
 import pymongo
 
-from db import load_collection
-from lib import error_response
-from lib import success_response
+from db import Mongo, delete_all
 from middleware import auth_middleware
+from lib import respond
 
 
-def logout_user(app: FastAPI, client: pymongo.MongoClient):
-
-    user_collection = load_collection(client, 'users')
-    session_collection = load_collection(client, 'sessions')
+def logout_user(app: FastAPI, mongo: Mongo):
 
     @app.get("/user/logout")
-    async def route_logout_user(request: Request, response: Response):
-        try:
-            user = auth_middleware(
-                request, session_collection, user_collection)
-            delete_count = session_collection.delete_many({
-                'user': user['_id']
-            })
-            response.set_cookie(
-                key='session_token',
-                value=''
-            )
-            return success_response(response, 200, 'user logged out')
-        except Exception as error:
-            return error_response(response, error)
+    async def route_logout_user(req: Request, res: Response):
+
+        # getting logged in user
+        user, err = auth_middleware(req, mongo)
+        if err != None:
+            respond(res, 'unauthorized', 400)
+
+        # removing all sessions associated with user
+        result = delete_all(mongo.sessions, {'user': user['_id']})
+
+        # deleting session data from http cookie
+        res.set_cookie(
+            key='session_token',
+            value=''
+        )
+
+        # json response
+        return respond(res, 'user logged out')

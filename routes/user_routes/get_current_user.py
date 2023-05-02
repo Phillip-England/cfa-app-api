@@ -1,27 +1,22 @@
-import datetime
-
 from fastapi import Request, Response, FastAPI
-import pymongo
 
-from db import load_collection
+from db import Mongo
 from middleware import auth_middleware
-from lib import error_response
-from lib import success_response
+from lib import respond
 
 
-def get_current_user(app: FastAPI, client: pymongo.MongoClient):
-
-    user_collection = load_collection(client, 'users')
-    session_collection = load_collection(client, 'sessions')
+def get_current_user(app: FastAPI, mongo: Mongo):
 
     @app.get("/user")
-    async def route_get_current_user(request: Request, response: Response):
-        try:
-            user = auth_middleware(
-                request, session_collection, user_collection)
-            return success_response(response, 200, 'success', {
-                '_id': str(user['_id']),
-                'email': user['email'],
-            })
-        except Exception as error:
-            return error_response(response, error)
+    async def route_get_current_user(req: Request, res: Response):
+
+        # getting the current user
+        user, err = auth_middleware(req, mongo)
+        if err != None:
+            return respond(res, 'unauthorized', 401)
+
+        # json response
+        return respond(res, 'current user', data={
+            '_id': str(user['_id']),
+            'email': user['email'],
+        })
